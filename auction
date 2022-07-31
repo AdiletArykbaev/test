@@ -13,7 +13,7 @@ contract auction is Ownable {
     IERC20 public token;
     IERC1155 public nft;
 
-    uint public fee; //fee for creating auction
+    uint public fee = 1 ether; //fee for creating auction
     uint public aucNumber = 1;
 
     constructor (IERC20 _address) {
@@ -55,23 +55,27 @@ contract auction is Ownable {
 
     function vote(uint number, uint price) external payable {
 
-        require(msg.value >= price, "incorrect pay");
         if (block.timestamp > auctions[number].time && !auctions[number].finished) {
-            finishAuction(number, msg.value);
+            finishAuction(number);
         }
+
+        require(msg.value >= price && msg.value >= auctions[number].min && msg.value >= auctions[number].bestBid, "incorrect pay");
         require(block.timestamp < auctions[number].time);
         require(!auctions[number].finished, "voting is finished");
-        //только голосование
-        if (price > auctions[number].max) {
+
+        if (price >= auctions[number].max) {
             finishAuctionMax(number, msg.value);
+            auctions[number].bestBid = price;
+            auctions[number].bestBidAddr = msg.sender;
         }else {
             auctions[number].bestBid = price;
+            auctions[number].bestBidAddr = msg.sender;
         }
         balances[msg.sender][number] += price;
 
     }
 
-    function finishAuction(uint number, uint price) internal {
+    function finishAuction(uint number) internal {
         auctions[number].finished = true;
         nft = IERC1155(auctions[number].nftAddr);
         nft.safeTransferFrom(address(this), auctions[number].bestBidAddr, auctions[number].id, auctions[number].amount, "");
@@ -86,16 +90,28 @@ contract auction is Ownable {
     }
 
     function backNFT (uint number) external {
-        require(auctions[number].seller == msg.sender, "not an owner");
-        require(!auctions[number].done, "already claimed");
+        if (block.timestamp > auctions[number].time && !auctions[number].finished) {
+            auctions[number].finished = true;
+        }
+        require(auctions[number].seller == msg.sender, "not an owner"); 
+        require(!auctions[number].done, "already claimed"); 
         require(block.timestamp > auctions[number].time, "Voting is not finished");
-        require(auctions[number].bestBid < auctions[number].min, "Bid is already exist");
-        auctions[number].done = true;
-        nft.safeTransferFrom(address(this), msg.sender, auctions[number].id, auctions[number].amount, "");
+        if (auctions[number].bestBid > 0) {
+            auctions[number].done = true;
+            finishAuction(number);
+        } else {
+            auctions[number].done = true;
+            nft.safeTransferFrom(address(this), msg.sender, auctions[number].id, auctions[number].amount, "");
+        }
     }
 
     function backEther (uint number) external {
-        require(balances[msg.sender][number] > 0);
+        if (block.timestamp > auctions[number].time && !auctions[number].finished) {
+            finishAuction(number);
+        }
+        require(balances[msg.sender][number] > 0, "You didn't vote");
+        require(block.timestamp > auctions[number].time, "Still open");
+        require(auctions[number].bestBidAddr != msg.sender, "You are winner! Please check NFT on your account!");
         uint balance = balances[msg.sender][number];
         balances[msg.sender][number] = 0;
         payable(msg.sender).transfer(balance);
