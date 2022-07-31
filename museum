@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: GPL-3.0
+
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Receiver.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+
+contract staking is Ownable {
+
+    IERC20 public token;
+    IERC1155 public nft;
+    AggregatorV3Interface internal priceFeed;
+
+    uint public stakedCount = 1;
+
+    event DepositedNFT(address who, address nftAddr, uint id, uint amount, uint time);
+    event WithdrawNFT(address to, address nftAddr, uint id, uint amount, uint time);
+    event TransferOwnership(address from, address to, address nftAddr, uint id, uint amount, uint time);
+
+    constructor (IERC20 _address) {
+        token = _address;
+        priceFeed = AggregatorV3Interface(0x8A753747A1Fa494EC906cE90E9f37563A8AF630e); //Поменять на нужный оракул
+    }
+
+    struct Voting {
+        address owner;
+        address nftAddr;
+        uint id;
+        uint amount;
+        uint time;
+        uint vote;
+        uint comission;
+        uint pool;
+    }
+
+    mapping(address => mapping (uint => uint)) public lockedTokens; //who -> number of voting -> amount of locked
+
+    function getLatestPrice() public view returns (int) {
+        (
+            /*uint80 roundID*/,
+            int price,
+            /*uint startedAt*/,
+            /*uint timeStamp*/,
+            /*uint80 answeredInRound*/
+        ) = priceFeed.latestRoundData();
+        return price;
+    }
+
+
+    mapping(address => mapping(uint => Voting)) public forVoting; //who => number of voting => vote
+    mapping(uint => address) public numberToOwner; //number of voting to owner
+
+    //Перед стейком пользователь должен сделать Approve
+    function createVoting (address _nftAddr, uint _id, uint _amount, uint _time) external payable{
+        //Узнаём стоимость 1 эфира и сравниваем с токеном кол-во*цену
+        require(msg.value >= 1 ether); //И допишем сюда
+        require(msg.sender != address(0) && _time > 0  && _amount > 0);
+        nft = IERC1155(_nftAddr);
+        nft.safeTransferFrom(msg.sender, address(this), _id, _amount, "");
+        forVoting[msg.sender][stakedCount] = Voting(msg.sender, _nftAddr, _id, _amount, block.timestamp+_time, 0, msg.value, 0);
+        numberToOwner[stakedCount] = msg.sender;
+        stakedCount++;
+        emit DepositedNFT(msg.sender, _nftAddr, _id, _amount, block.timestamp);
+    }
+
+    function voteForNFT(uint number, uint amount, bool _for) external {
+        require(token.balanceOf(msg.sender) > 0);
+        require(block.timestamp < forVoting[numberToOwner[number]][number].time);
+        require(lockedTokens[msg.sender][number] == 0);
+        token.transferFrom(msg.sender, address(this), amount);
+        lockedTokens[msg.sender][number] = amount;
+        forVoting[numberToOwner[number]][number].pool += amount;
+        if (_for) {
+            forVoting[numberToOwner[number]][number].vote++;
+        } else {
+            forVoting[numberToOwner[number]][number].vote--;
+        }
+
+    }
+
+    function withdrawToken(uint number) external {
+        require(block.timestamp > forVoting[numberToOwner[number]][number].time);
+        require(lockedTokens[msg.sender][number] > 0);
+        uint balance = lockedTokens[msg.sender][number];
+        uint reward = calcReward(number);
+        lockedTokens[msg.sender][number] = 0;
+        token.transfer(msg.sender, balance);
+        payable(msg.sender).transfer(reward);
+    }
+
+    function calcReward(uint number) internal view returns(uint reward) {
+        reward = lockedTokens[msg.sender][number] / forVoting[numberToOwner[number]][number].pool * 100 ;
+    }
+ 
+    function withdrawNFT(uint _number) external {
+        require(forVoting[msg.sender][_number].owner == msg.sender, "Not an owner!");
+        require(forVoting[msg.sender][_number].time > block.timestamp, "Still locked");
+        nft.safeTransferFrom (address(this), msg.sender, forVoting[msg.sender][_number].id, forVoting[msg.sender][_number].amount, "");
+        emit WithdrawNFT(msg.sender, forVoting[msg.sender][_number].nftAddr, forVoting[msg.sender][_number].id, forVoting[msg.sender][_number].amount, block.timestamp);
+    }
+
+    function transferOwner(address _newOwner, uint _number) external {
+        require(forVoting[msg.sender][_number].owner == msg.sender, "Not an owner!");
+        require(forVoting[msg.sender][_number].time > block.timestamp, "Still locked");
+        forVoting[msg.sender][_number].owner = _newOwner;
+        emit TransferOwnership(msg.sender, _newOwner, forVoting[msg.sender][_number].nftAddr, forVoting[msg.sender][_number].id, forVoting[msg.sender][_number].amount, block.timestamp);
+    }
+
+    function onERC1155Received(
+        address operator,
+        address from,
+        uint256 id,
+        uint256 value,
+        bytes calldata data
+    ) external pure returns (bytes4) {
+        return bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)"));
+    }
+
+}
