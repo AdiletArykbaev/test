@@ -84,7 +84,7 @@ contract staking is Ownable {
         require(msg.sender != address(0) && _time > 0  && _amount > 0);
         nft = IERC1155(_nftAddr);
         nft.safeTransferFrom(msg.sender, address(this), _id, _amount, "");
-        numberToVote[votingCount] = Voting(msg.sender, _nftAddr, _id, _amount, block.timestamp+_time, 0, msg.value, 0);
+        numberToVote[votingCount] = Voting(msg.sender, _nftAddr, _id, _amount, block.timestamp+_time, 0, (msg.value/100*95), 0);
         numberToOwner[votingCount] = msg.sender;
         votingCount++;
         emit DepositedNFT(msg.sender, _nftAddr, _id, _amount, block.timestamp);
@@ -102,7 +102,6 @@ contract staking is Ownable {
         } else {
             numberToVote[number].vote--;
         }
-
     }
 
     function withdrawToken(uint number) external {
@@ -116,8 +115,8 @@ contract staking is Ownable {
     }
 
     function calcReward(uint number) internal view returns(uint reward) {
-        reward = lockedTokens[msg.sender][number] / numberToVote[number].pool * 100 ;
-
+        uint perc = lockedTokens[msg.sender][number] / numberToVote[number].pool * 100;
+        reward = numberToVote[number].comission/100*perc;
     }
  
     function withdrawNFT(uint _number) external {
@@ -153,5 +152,8 @@ contract staking is Ownable {
     ) external pure returns (bytes4) {
         return bytes4(keccak256("onERC1155Received(address,address,uint256,uint256,bytes)"));
     }
+
+
+
 
 }
